@@ -5,6 +5,7 @@ COPY . .
 
 RUN go build -o hello .
 
+
 FROM debian:bullseye-slim
 
 WORKDIR /app
