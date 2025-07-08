@@ -1,0 +1,166 @@
+# ---------- Namespace ----------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: wp
+
+# ---------- Secret ----------
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wp-db-secret
+  namespace: wp
+type: Opaque
+data:
+  # echo -n password | base64
+  mariadb-root-pass: cGFzc3dvcmQ=
+  mariadb-user: d29yZHByZXNzX3VzZXI=
+  mariadb-pass: cGFzc3dvcmQ=
+
+# ---------- PersistentVolumeClaims ----------
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wp-db-pvc
+  namespace: wp
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wp-data-pvc
+  namespace: wp
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 1Gi
+
+# ---------- MariaDB Deployment & Service ----------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mariadb
+  namespace: wp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mariadb
+  template:
+    metadata:
+      labels:
+        app: mariadb
+    spec:
+      containers:
+        - name: mariadb
+          image: mirror.gcr.io/mariadb:11.8.1-ubi9-rc
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: wp-db-secret
+                  key: mariadb-root-pass
+            - name: MYSQL_DATABASE
+              value: wordpress
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: wp-db-secret
+                  key: mariadb-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: wp-db-secret
+                  key: mariadb-pass
+          volumeMounts:
+            - name: db-storage
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: db-storage
+          persistentVolumeClaim:
+            claimName: wp-db-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mariadb
+  namespace: wp
+spec:
+  selector:
+    app: mariadb
+  ports:
+    - port: 3306
+      targetPort: 3306
+  type: ClusterIP
+
+# ---------- WordPress Deployment & Service ----------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress
+  namespace: wp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wordpress
+  template:
+    metadata:
+      labels:
+        app: wordpress
+    spec:
+      containers:
+        - name: wordpress
+          image: mirror.gcr.io/wordpress:6.8.1-php8.1-apache
+          ports:
+            - containerPort: 80
+          env:
+            - name: WORDPRESS_DB_HOST
+              value: mariadb.wp.svc.cluster.local:3306
+            - name: WORDPRESS_DB_NAME
+              value: wordpress
+            - name: WORDPRESS_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: wp-db-secret
+                  key: mariadb-user
+            - name: WORDPRESS_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: wp-db-secret
+                  key: mariadb-pass
+          volumeMounts:
+            - name: wp-storage
+              mountPath: /var/www/html
+      volumes:
+        - name: wp-storage
+          persistentVolumeClaim:
+            claimName: wp-data-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress
+  namespace: wp
+spec:
+  selector:
+    app: wordpress
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30080
+  type: NodePort
